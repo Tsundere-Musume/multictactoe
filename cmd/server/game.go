@@ -73,7 +73,7 @@ func (g *Game) handleCommand(conn net.Conn, cmd string) {
 	fmt.Println()
 	cell, _ := strconv.Atoi(cmd)
 	if conn != g.players[g.curr] {
-		_, err := conn.Write([]byte("Not your turn\n"))
+		_, err := conn.Write([]byte("notify:not your turn\n"))
 		if err != nil {
 			//TODO: server error
 			return
@@ -86,6 +86,8 @@ func (g *Game) handleCommand(conn net.Conn, cmd string) {
 	} else {
 		g.board[cell] = movePlayer2
 	}
+	g.curr = (g.curr + 1) % 2
+	g.broadcast([]byte(fmt.Sprintf("move:%v\n", cell)))
 	if g.checkWin() {
 		for r := range 9 {
 			if r%3 == 0 {
@@ -95,15 +97,23 @@ func (g *Game) handleCommand(conn net.Conn, cmd string) {
 		}
 		g.writeWin()
 	}
-	g.curr = (g.curr + 1) % 2
 }
 
 func (g *Game) writeWin() {
 	for idx, conn := range g.players {
 		if idx == g.curr {
-			conn.Write([]byte("Winner congrats!"))
+			conn.Write([]byte("end:Winner congrats!\n"))
 		} else {
-			conn.Write([]byte("The other player won."))
+			conn.Write([]byte("end:The other player won.\n"))
+		}
+	}
+}
+
+func (s *Game) broadcast(msg []byte) {
+	for _, conn := range s.players {
+		_, err := conn.Write(msg)
+		if err != nil {
+			continue
 		}
 	}
 }

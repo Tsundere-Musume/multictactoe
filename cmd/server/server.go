@@ -3,7 +3,6 @@ package main
 import (
 	"bufio"
 	"errors"
-	"fmt"
 	"io"
 	"log"
 	"net"
@@ -65,16 +64,5 @@ func (s *GameServer) handleConnection(conn net.Conn) {
 		log.Printf("Got %s from %v", msg, conn.RemoteAddr())
 
 		s.game.handleCommand(conn, msg)
-		// go s.broadcast([]byte(msg))
-	}
-}
-
-func (s *GameServer) broadcast(msg []byte) {
-	for _, conn := range s.clients {
-		fmt.Println(conn, msg)
-		_, err := conn.Write(msg)
-		if err != nil {
-			continue
-		}
 	}
 }
