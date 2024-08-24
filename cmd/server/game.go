@@ -1,10 +1,8 @@
 package main
 
 import (
-	"bufio"
 	"fmt"
 	"net"
-	"os"
 	"strconv"
 )
 
@@ -18,6 +16,7 @@ type Game struct {
 	currPlayerMove int
 	players        [2]net.Conn
 	curr           int
+	ready          bool
 }
 
 func newGame() *Game {
@@ -26,6 +25,14 @@ func newGame() *Game {
 	}
 }
 
+func (g *Game) printBoard() {
+	for r := range 9 {
+		if r%3 == 0 {
+			fmt.Println()
+		}
+		fmt.Printf("%v ", g.board[r])
+	}
+}
 func (g *Game) checkWin() bool {
 	sums := []int{}
 	for i := range 3 {
@@ -36,34 +43,10 @@ func (g *Game) checkWin() bool {
 	//diagonals check
 	sums = append(sums, g.board[0]+g.board[4]+g.board[8])
 	sums = append(sums, g.board[2]+g.board[4]+g.board[6])
-	return any(sums, func(_ int, val int) bool { return val == movePlayer1*3 || val == movePlayer2*3 })
+	return any_f(sums, func(_ int, val int) bool { return val == movePlayer1*3 || val == movePlayer2*3 })
 }
 
-func (g *Game) start() {
-	scanner := bufio.NewScanner(os.Stdin)
-	for {
-		fmt.Printf("%#v\n", g.board)
-		if g.checkWin() {
-			return
-		}
-
-		scanner.Scan()
-		cell, err := strconv.Atoi(scanner.Text())
-		if err != nil || cell >= 9 || cell < 0 {
-			continue
-		}
-		g.board[cell] = g.currPlayerMove
-
-		if g.currPlayerMove == movePlayer1 {
-			g.currPlayerMove = movePlayer2
-		} else {
-			g.currPlayerMove = movePlayer1
-		}
-
-	}
-}
-
-func (g *Game) handleCommand(conn net.Conn, cmd string) {
+func (g *Game) handleCommand(conn net.Conn, cm []byte) {
 	for r := range 9 {
 		if r%3 == 0 {
 			fmt.Println()
@@ -71,6 +54,8 @@ func (g *Game) handleCommand(conn net.Conn, cmd string) {
 		fmt.Printf("%v ", g.board[r])
 	}
 	fmt.Println()
+	cmd := string(cm)
+	fmt.Println(cmd)
 	cell, _ := strconv.Atoi(cmd)
 	if conn != g.players[g.curr] {
 		_, err := conn.Write([]byte("notify:not your turn\n"))
@@ -86,17 +71,13 @@ func (g *Game) handleCommand(conn net.Conn, cmd string) {
 	} else {
 		g.board[cell] = movePlayer2
 	}
-	g.curr = (g.curr + 1) % 2
 	g.broadcast([]byte(fmt.Sprintf("move:%v\n", cell)))
 	if g.checkWin() {
-		for r := range 9 {
-			if r%3 == 0 {
-				fmt.Println()
-			}
-			fmt.Printf("%v ", g.board[r])
-		}
+		g.printBoard()
+		g.ready = false
 		g.writeWin()
 	}
+	g.curr = (g.curr + 1) % 2
 }
 
 func (g *Game) writeWin() {

@@ -19,6 +19,7 @@ const (
 )
 
 type Game struct {
+	gameId         string
 	board          [9]int
 	cursor         int
 	conn           net.Conn
@@ -26,6 +27,7 @@ type Game struct {
 	currPlayerMove int
 	done           bool
 	message        string
+	ready          bool
 }
 
 func (m *Game) listen() {
@@ -55,31 +57,40 @@ func waitForActivity(sub chan string) tea.Cmd {
 }
 
 func handleCommand(m Game, resp string) (Game, tea.Cmd) {
-	out := strings.Split(resp, ":")
-	if len(out) < 2 {
-		panic(fmt.Sprintf("Couldn't parse command, %s", out[0]))
+	if !m.ready && resp[:1] == "0" {
+		m.gameId = resp[1:]
+		m.ready = true
+		m.message = "Game is ready."
+		return m, waitForActivity(m.cmds)
 	}
-	switch out[0] {
-	case "move":
-		idx, err := strconv.Atoi(out[1])
-		if err != nil {
-			panic("Server error: malformed command.")
+	if m.ready {
+		out := strings.Split(resp, ":")
+		if len(out) < 2 {
+			panic(fmt.Sprintf("Couldn't parse command, %s", out[0]))
 		}
-		m.board[idx] = m.currPlayerMove
-		m.currPlayerMove = -(m.currPlayerMove - movePlayer1 - movePlayer2)
-	case "end":
-		m.message = out[1]
-		m.done = true
-		return m, tea.Quit
+		switch out[0] {
+		case "move":
+			idx, err := strconv.Atoi(out[1])
+			if err != nil {
+				panic("Server error: malformed command.")
+			}
+			m.board[idx] = m.currPlayerMove
+			m.currPlayerMove = -(m.currPlayerMove - movePlayer1 - movePlayer2)
+		case "end":
+			m.message = out[1]
+			m.done = true
+			return m, tea.Quit
 
-	case "notify":
-		m.message = out[1]
+		case "notify":
+			m.message = out[1]
+		}
 	}
 	return m, waitForActivity(m.cmds)
 
 }
 
 func (m Game) Init() tea.Cmd {
+	m.conn.Write([]byte("0\n"))
 	return waitForActivity(m.cmds)
 }
 
@@ -101,7 +112,7 @@ func (m Game) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "k":
 			m.cursor -= 3
 		case " ":
-			_, err := m.conn.Write([]byte(fmt.Sprintf("%v\n", m.cursor)))
+			_, err := m.conn.Write([]byte(fmt.Sprintf("1%v%v\n", m.gameId, m.cursor)))
 			if err != nil {
 				fmt.Println("Error writing to the server", err)
 			}

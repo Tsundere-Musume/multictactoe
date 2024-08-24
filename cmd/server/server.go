@@ -2,24 +2,44 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"errors"
 	"io"
 	"log"
 	"net"
-	"strings"
 	"sync"
+
+	"github.com/google/uuid"
 )
 
 type GameServer struct {
-	game    *Game
+	game    map[string]*Game
 	clients []net.Conn
 	mu      sync.Mutex
 	ready   bool
+	pool    chan net.Conn
 }
 
 func newSever() *GameServer {
 	return &GameServer{
-		game: newGame(),
+		game: make(map[string]*Game, 10),
+		pool: make(chan net.Conn, 10),
+	}
+}
+
+func (s *GameServer) createGame() {
+	for {
+		player1 := <-s.pool
+		player2 := <-s.pool
+		gameId := uuid.NewString()
+		game := newGame()
+		s.mu.Lock()
+		game.players[0] = player1
+		game.players[1] = player2
+		s.game[gameId] = game
+		s.mu.Unlock()
+		//TODO: handle errors
+		game.broadcast([]byte("0" + gameId + "\n"))
 	}
 }
 
@@ -29,40 +49,47 @@ func (s *GameServer) Start(addr string) error {
 		return err
 	}
 	defer listener.Close()
+	go s.createGame()
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
 			log.Println("Error accepting the connection ", err)
 			continue
 		}
-		s.mu.Lock()
-		s.clients = append(s.clients, conn)
-		if len(s.clients) == 2 {
-			s.ready = true
-			s.game.players[0] = s.clients[0]
-			s.game.players[1] = s.clients[1]
-		}
-		s.mu.Unlock()
 		go s.handleConnection(conn)
 	}
 }
 
 func (s *GameServer) handleConnection(conn net.Conn) {
 	defer conn.Close()
-	for func() bool { return !s.ready }() {
-	}
 	reader := bufio.NewReader(conn)
 	for {
-		msg, err := reader.ReadString('\n')
+		msg, err := reader.ReadBytes('\n')
 		if err != nil {
 			if !errors.Is(err, io.EOF) {
 				log.Println("Error reading from the connection, ", err)
 			}
 			return
 		}
-		msg = strings.TrimSpace(msg)
-		log.Printf("Got %s from %v", msg, conn.RemoteAddr())
+		msg = bytes.TrimSpace(msg)
+		log.Printf("Got %s from %v", string(msg), conn.RemoteAddr())
+		s.handleCommand(conn, msg)
+	}
+}
 
-		s.game.handleCommand(conn, msg)
+func (s *GameServer) handleCommand(conn net.Conn, msg []byte) {
+	switch msg[0] {
+	case '0':
+		s.pool <- conn
+	case '1':
+		if len(msg) < 38 {
+			return
+		}
+		gameId := msg[1:37]
+		game, ok := s.game[string(gameId)]
+		if !ok {
+			return
+		}
+		game.handleCommand(conn, msg[37:])
 	}
 }

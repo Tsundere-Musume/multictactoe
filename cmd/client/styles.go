@@ -13,7 +13,7 @@ const (
 )
 
 var (
-	base        = lipgloss.NewStyle().Padding(0, 1).Foreground(TEXT).BorderForeground(borderColor)
+	base        = lipgloss.NewStyle().Padding(0, 1).Foreground(active).BorderForeground(borderColor)
 	borderStyle = lipgloss.NewStyle().Foreground(borderColor).BorderForeground(borderColor)
 	boardBorder = borderStyle.UnsetPadding().BorderStyle(lipgloss.ThickBorder())
 )
