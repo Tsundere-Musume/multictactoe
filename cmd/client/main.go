@@ -1,14 +1,13 @@
 package main
 
 import (
-	"bufio"
-	"errors"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net"
 	"strconv"
-	"strings"
+	message "tictactoe/internal"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -23,7 +22,7 @@ type Game struct {
 	board          [9]int
 	cursor         int
 	conn           net.Conn
-	cmds           chan string
+	cmds           chan message.Message
 	currPlayerMove int
 	done           bool
 	message        string
@@ -32,57 +31,56 @@ type Game struct {
 
 func (m *Game) listen() {
 	defer m.conn.Close()
-	reader := bufio.NewReader(m.conn)
+	dec := json.NewDecoder(m.conn)
 	for {
-		msg, err := reader.ReadString('\n')
+		var resp message.Message
+		err := dec.Decode(&resp)
 		if err != nil {
-			if !errors.Is(err, io.EOF) {
-				log.Println("Connection closed from the server")
+			if err == io.EOF {
+				panic("Connection closed from server\n")
 			}
 			return
 		}
-		msg = strings.TrimSpace(msg)
-		m.cmds <- msg
+		m.cmds <- resp
 	}
-
 }
 
-type responseMsg string
+type responseMsg message.Message
 type quitMsg struct{}
 
-func waitForActivity(sub chan string) tea.Cmd {
+func waitForActivity(sub chan message.Message) tea.Cmd {
 	return func() tea.Msg {
 		return responseMsg(<-sub)
 	}
 }
 
-func handleCommand(m Game, resp string) (Game, tea.Cmd) {
-	if !m.ready && resp[:1] == "0" {
-		m.gameId = resp[1:]
+func handleCommand(m Game, resp message.Message) (Game, tea.Cmd) {
+	if resp.Type != message.ServerResponse {
+		return m, waitForActivity(m.cmds)
+	}
+	if !m.ready && resp.Type == message.GameReady {
+		m.gameId = resp.GameId
 		m.ready = true
 		m.message = "Game is ready."
 		return m, waitForActivity(m.cmds)
 	}
 	if m.ready {
-		out := strings.Split(resp, ":")
-		if len(out) < 2 {
-			panic(fmt.Sprintf("Couldn't parse command, %s", out[0]))
-		}
-		switch out[0] {
-		case "move":
-			idx, err := strconv.Atoi(out[1])
+		switch resp.CommandType {
+		case message.Move:
+			idx, err := strconv.Atoi(resp.Body)
 			if err != nil {
+				//log this out
 				panic("Server error: malformed command.")
 			}
 			m.board[idx] = m.currPlayerMove
 			m.currPlayerMove = -(m.currPlayerMove - movePlayer1 - movePlayer2)
-		case "end":
-			m.message = out[1]
+		case message.EndGame:
+			m.message = resp.Body
 			m.done = true
 			return m, tea.Quit
 
-		case "notify":
-			m.message = out[1]
+		case message.Notify:
+			m.message = resp.Body
 		}
 	}
 	return m, waitForActivity(m.cmds)
@@ -90,7 +88,7 @@ func handleCommand(m Game, resp string) (Game, tea.Cmd) {
 }
 
 func (m Game) Init() tea.Cmd {
-	m.conn.Write([]byte("0\n"))
+	message.Send(m.conn, createServerCmd(m.gameId, message.Join, ""))
 	return waitForActivity(m.cmds)
 }
 
@@ -112,7 +110,7 @@ func (m Game) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "k":
 			m.cursor -= 3
 		case " ":
-			_, err := m.conn.Write([]byte(fmt.Sprintf("1%v%v\n", m.gameId, m.cursor)))
+			err := message.Send(m.conn, createGameCmd(m.gameId, message.Move, fmt.Sprint(m.cursor)))
 			if err != nil {
 				fmt.Println("Error writing to the server", err)
 			}
@@ -121,7 +119,7 @@ func (m Game) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case responseMsg:
 		m.message = ""
-		m, cmd = handleCommand(m, string(msg))
+		m, cmd = handleCommand(m, message.Message(msg))
 		cmds = append(cmds, cmd)
 
 	case quitMsg:
@@ -165,7 +163,7 @@ func main() {
 	if err != nil {
 		log.Fatal("Couldn't connect to the game server\n")
 	}
-	game := Game{cmds: make(chan string), conn: conn, currPlayerMove: movePlayer1}
+	game := Game{cmds: make(chan message.Message), conn: conn, currPlayerMove: movePlayer1}
 	go game.listen()
 	p := tea.NewProgram(game)
 	if _, err := p.Run(); err != nil {

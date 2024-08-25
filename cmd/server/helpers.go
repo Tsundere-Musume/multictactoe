@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	message "tictactoe/internal"
 )
 
 func any_f[T comparable](arr []T, predicate func(int, T) bool) bool {
@@ -54,4 +55,9 @@ func assert_eq[T comparable](left, right T) {
 	if left != right {
 		panic(fmt.Sprintf("not equal, left = %v and right = %v", left, right))
 	}
+}
+
+func createServerReponse(gameId string, cmdType uint8, body string) message.Message {
+	msg := message.Message{GameId: gameId, Type: message.ServerResponse, CommandType: cmdType, Body: body}
+	return msg
 }

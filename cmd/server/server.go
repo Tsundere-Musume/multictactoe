@@ -1,15 +1,12 @@
 package main
 
 import (
-	"bufio"
-	"bytes"
-	"errors"
+	"encoding/json"
 	"io"
 	"log"
 	"net"
 	"sync"
-
-	"github.com/google/uuid"
+	message "tictactoe/internal"
 )
 
 type GameServer struct {
@@ -22,7 +19,7 @@ type GameServer struct {
 
 func newSever() *GameServer {
 	return &GameServer{
-		game: make(map[string]*Game, 10),
+		game: make(map[string]*Game),
 		pool: make(chan net.Conn, 10),
 	}
 }
@@ -31,15 +28,14 @@ func (s *GameServer) createGame() {
 	for {
 		player1 := <-s.pool
 		player2 := <-s.pool
-		gameId := uuid.NewString()
 		game := newGame()
 		s.mu.Lock()
 		game.players[0] = player1
 		game.players[1] = player2
-		s.game[gameId] = game
+		s.game[game.id] = game
 		s.mu.Unlock()
 		//TODO: handle errors
-		game.broadcast([]byte("0" + gameId + "\n"))
+		game.broadcast(createServerReponse(game.id, message.GameReady, ""))
 	}
 }
 
@@ -62,34 +58,31 @@ func (s *GameServer) Start(addr string) error {
 
 func (s *GameServer) handleConnection(conn net.Conn) {
 	defer conn.Close()
-	reader := bufio.NewReader(conn)
+	dec := json.NewDecoder(conn)
 	for {
-		msg, err := reader.ReadBytes('\n')
+		var m message.Message
+		err := dec.Decode(&m)
 		if err != nil {
-			if !errors.Is(err, io.EOF) {
-				log.Println("Error reading from the connection, ", err)
+			if err == io.EOF {
+				log.Printf("Connection closed from %v\n", conn.RemoteAddr())
 			}
+			log.Println(err)
 			return
 		}
-		msg = bytes.TrimSpace(msg)
-		log.Printf("Got %s from %v", string(msg), conn.RemoteAddr())
-		s.handleCommand(conn, msg)
+		log.Printf("Got %#v from %v", m, conn.RemoteAddr())
+		s.handleCommand(conn, m)
 	}
 }
 
-func (s *GameServer) handleCommand(conn net.Conn, msg []byte) {
-	switch msg[0] {
-	case '0':
+func (s *GameServer) handleCommand(conn net.Conn, msg message.Message) {
+	switch msg.Type {
+	case message.ServerCommand:
 		s.pool <- conn
-	case '1':
-		if len(msg) < 38 {
-			return
-		}
-		gameId := msg[1:37]
-		game, ok := s.game[string(gameId)]
+	case message.GameCommand:
+		game, ok := s.game[msg.GameId]
 		if !ok {
 			return
 		}
-		game.handleCommand(conn, msg[37:])
+		game.handleCommand(conn, msg)
 	}
 }

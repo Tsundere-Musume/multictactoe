@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"net"
 	"strconv"
+	message "tictactoe/internal"
+
+	"github.com/google/uuid"
 )
 
 const (
@@ -11,7 +14,10 @@ const (
 	movePlayer2 = 7
 )
 
+var playerMoves = [2]int{movePlayer1, movePlayer2}
+
 type Game struct {
+	id             string
 	board          [9]int
 	currPlayerMove int
 	players        [2]net.Conn
@@ -22,6 +28,7 @@ type Game struct {
 func newGame() *Game {
 	return &Game{
 		currPlayerMove: movePlayer1,
+		id:             uuid.NewString(),
 	}
 }
 
@@ -46,53 +53,52 @@ func (g *Game) checkWin() bool {
 	return any_f(sums, func(_ int, val int) bool { return val == movePlayer1*3 || val == movePlayer2*3 })
 }
 
-func (g *Game) handleCommand(conn net.Conn, cm []byte) {
-	for r := range 9 {
-		if r%3 == 0 {
-			fmt.Println()
-		}
-		fmt.Printf("%v ", g.board[r])
-	}
-	fmt.Println()
-	cmd := string(cm)
-	fmt.Println(cmd)
-	cell, _ := strconv.Atoi(cmd)
+func (g *Game) handleCommand(conn net.Conn, msg message.Message) {
 	if conn != g.players[g.curr] {
-		_, err := conn.Write([]byte("notify:not your turn\n"))
+		err := message.Send(conn, createServerReponse(g.id, message.Notify, "Not your turn."))
 		if err != nil {
 			//TODO: server error
 			return
 		}
 		return
 	}
-	fmt.Printf("%v played %v\n", conn.RemoteAddr(), cell)
-	if g.curr%2 == 0 {
-		g.board[cell] = movePlayer1
-	} else {
-		g.board[cell] = movePlayer2
+
+	switch msg.CommandType {
+	case message.Move:
+		fmt.Println(msg.Body)
+		cell, err := strconv.Atoi(msg.Body)
+		fmt.Println(cell)
+		if err != nil || cell < 0 || cell >= 9 {
+			message.Send(conn, createServerReponse(g.id, message.Notify, "Invalid Move"))
+			break
+		}
+		fmt.Printf("%v tried playing %v\n", conn.RemoteAddr(), cell)
+		g.board[cell] = playerMoves[g.curr]
+		g.broadcast(msg)
+		if g.checkWin() {
+			g.printBoard()
+			g.ready = false
+			g.writeWin()
+		}
+		g.curr = (g.curr + 1) % 2
+		fmt.Printf("%v played %v\n", conn.RemoteAddr(), cell)
 	}
-	g.broadcast([]byte(fmt.Sprintf("move:%v\n", cell)))
-	if g.checkWin() {
-		g.printBoard()
-		g.ready = false
-		g.writeWin()
-	}
-	g.curr = (g.curr + 1) % 2
+	g.printBoard()
 }
 
 func (g *Game) writeWin() {
 	for idx, conn := range g.players {
 		if idx == g.curr {
-			conn.Write([]byte("end:Winner congrats!\n"))
+			message.Send(conn, createServerReponse(g.id, message.EndGame, "Winner Congrats!!!"))
 		} else {
-			conn.Write([]byte("end:The other player won.\n"))
+			message.Send(conn, createServerReponse(g.id, message.EndGame, "Other player wins."))
 		}
 	}
 }
 
-func (s *Game) broadcast(msg []byte) {
-	for _, conn := range s.players {
-		_, err := conn.Write(msg)
+func (g *Game) broadcast(msg message.Message) {
+	for _, conn := range g.players {
+		err := message.Send(conn, createServerReponse(g.id, message.Move, msg.Body))
 		if err != nil {
 			continue
 		}
