@@ -77,7 +77,11 @@ func (s *GameServer) handleConnection(conn net.Conn) {
 func (s *GameServer) handleCommand(conn net.Conn, msg message.Message) {
 	switch msg.Type {
 	case message.ServerCommand:
-		s.pool <- conn
+		switch msg.CommandType {
+		case message.Join:
+			s.pool <- conn
+		case message.Create:
+		}
 	case message.GameCommand:
 		game, ok := s.game[msg.GameId]
 		if !ok {

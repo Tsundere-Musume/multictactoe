@@ -25,6 +25,7 @@ const (
 	GameReady
 	EndGame
 	Join
+	Create
 )
 
 func Send(conn net.Conn, msg Message) error {
